@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Земельные участки</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0b1220;
+        }
+        #map {
+            width: 100%;
+            height: 100vh;
+        }
+        /* Приглушаем подложку для Yandex */
+        #map [class*="ymaps-"][class*="-ground-pane"] {
+            filter: grayscale(1) brightness(0.55) saturate(0.7);
+        }
+        /* нижние лейблы Yandex Maps */
+        #map [class*="ymaps-"][class*="-map-copyrights-promo"],
+        #map [class*="ymaps-"][class*="-gotoymaps"],
+        #map [class*="ymaps-"][class*="-gototech"],
+        #map [class*="ymaps-"][class*="-copyright"] {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+
+<script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&apikey=16d442f1-df6c-4a2d-a863-ed6a830dd524"></script>
+
+<script>
+    const geojsonUrl = "lesnaya.geojson";
+    // Таблица статусов (CSV). Формат колонок:
+    // cadastral,status,area,link,updated
+    // 50:18:0090613:1003,Свободен,650,,02.04.2026 12:36:31
+    const statusUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTcWNQ2hBAxhuwl-i4aTMPfGri_pIkSarxsvzJRGkyiyAZDc4L9FuVibekE6BcAHAaOtVYyNg2KqikD/pub?gid=491333111&single=true&output=csv";
+
+    const colors = {
+        free: { base: "#309F48", hover: "#46bf5f" },
+        reserved: { base: "#94a3b8", hover: "#a5b1c4" },
+        sold: { base: "#636363", hover: "#484848" },
+        notForSale: { base: "#869393", hover: "#869393" }
+    };
+
+    const statusLabels = {
+        free: "Свободен",
+        reserved: "Забронирован",
+        sold: "Продан",
+        notForSale: "Нет в продаже"
+    };
+
+    const mapViewCfg = {
+        baseZoom: 15,
+        mobile: {
+            maxWidthPx: 900,
+            zoomDelta: -1,
+            offsetLon: 0,
+            offsetLat: 0
+        }
+    };
+
+    const showLabelsFromZoom = 16;
+    const labelFontPxByZoom = [
+        { zoom: 14, size: 6 },
+        { zoom: 15, size: 8 },
+        { zoom: 16, size: 10 },
+        { zoom: 17, size: 14 },
+        { zoom: 18, size: 16 }
+    ];
+
+    function isMobileView() {
+        return window.matchMedia && window.matchMedia(`(max-width: ${mapViewCfg.mobile.maxWidthPx}px)`).matches;
+    }
+
+    function applyMobileViewAdjustments(map, minZoom, maxZoom) {
+        if (!isMobileView()) return;
+        const currentCenter = map.getCenter();
+        const targetZoom = Math.min(maxZoom, Math.max(minZoom, map.getZoom() + mapViewCfg.mobile.zoomDelta));
+        const adjustedCenter = [
+            currentCenter[0] + mapViewCfg.mobile.offsetLat,
+            currentCenter[1] + mapViewCfg.mobile.offsetLon
+        ];
+        map.setCenter(adjustedCenter, targetZoom, { duration: 0, checkZoomRange: true });
+    }
+
+    function normalizeStatus(text) {
+        const value = (text || "").trim().toLowerCase();
+        if (!value) return null;
+        if (value.includes("свобод")) return "free";
+        if (value.includes("брон") || value.includes("резерв")) return "reserved";
+        if ((value.includes("нет") && value.includes("прод")) || value.includes("не прода")) return "notForSale";
+        if (value.includes("прод")) return "sold";
+        return null;
+    }
+
+    function parseSheetDate(text) {
+        const value = (text || "").trim();
+        if (!value) return null;
+        const ru = value.match(/^(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{2}):(\d{2}):(\d{2}))?$/);
+        if (ru) {
+            const [, dd, mm, yyyy, hh = "0", min = "0", ss = "0"] = ru;
+            const date = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(min), Number(ss));
+            const ts = date.getTime();
+            return Number.isFinite(ts) ? ts : null;
+        }
+        const us = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}):(\d{2}))?$/);
+        if (us) {
+            const [, mm, dd, yyyy, hh = "0", min = "0", ss = "0"] = us;
+            const date = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(min), Number(ss));
+            const ts = date.getTime();
+            return Number.isFinite(ts) ? ts : null;
+        }
+        return null;
+    }
+
+    function parseStatusCsv(text) {
+        const trimmed = (text || "").trim();
+        if (!trimmed) return { map: new Map(), maxUpdatedTs: null };
+        const lines = trimmed.split(/\r?\n/);
+        const headerCells = (lines[0] || "").split(",");
+        const headerUpdatedTs = parseSheetDate(headerCells[0]);
+        const rows = lines.slice(1);
+        const map = new Map();
+        let maxUpdatedTs = headerUpdatedTs ?? null;
+        rows.forEach(row => {
+            if (!row.trim()) return;
+            const cells = row.split(",");
+            const cadRaw = cells[0];
+            const statusRaw = cells[1];
+            const areaRaw = cells[2];
+            const priceRaw = cells[cells.length - 1];
+            const cadastral = (cadRaw || "").trim();
+            if (!cadastral) return;
+            const status = normalizeStatus(statusRaw);
+            const area = Number((areaRaw || "").trim());
+            const pricePerSotka = Number((priceRaw || "").trim());
+            map.set(cadastral, {
+                status,
+                area: Number.isFinite(area) ? area : null,
+                pricePerSotka: Number.isFinite(pricePerSotka) ? pricePerSotka : null,
+                link: null
+            });
+        });
+        return { map, maxUpdatedTs };
+    }
+
+    async function loadStatusData() {
+        try {
+            const cacheBust = (statusUrl.includes("?") ? "&" : "?") + "cb=" + Date.now();
+            const resp = await fetch(statusUrl + cacheBust, { cache: "no-store" });
+            if (!resp.ok) throw new Error("Status table not found");
+            const text = await resp.text();
+            return parseStatusCsv(text);
+        } catch (err) {
+            return { map: new Map(), maxUpdatedTs: null };
+        }
+    }
+
+    function cadastralFromDescription(text) {
+        const match = (text || "").match(/\b\d{2}:\d{2}:\d{7}:\d+\b/);
+        return match ? match[0] : null;
+    }
+
+    function shortCadastral(text) {
+        if (!text) return "";
+        const parts = text.split(":");
+        return parts[parts.length - 1] || text;
+    }
+
+    function makeLabelFontPx(currentZoom) {
+        if (!Number.isFinite(currentZoom)) return 12;
+        const points = labelFontPxByZoom;
+        let low = points[0];
+        let high = points[points.length - 1];
+        for (let i = 0; i < points.length; i++) {
+            const point = points[i];
+            if (currentZoom <= point.zoom) {
+                high = point;
+                break;
+            }
+            low = point;
+        }
+        if (currentZoom <= low.zoom) return low.size;
+        if (currentZoom >= high.zoom) return high.size;
+        const t = (currentZoom - low.zoom) / (high.zoom - low.zoom);
+        return low.size + (high.size - low.size) * t;
+    }
+
+    function makeLabelHtml(text, fontSize) {
+        const fontSizePx = Math.max(1, Math.round(fontSize));
+        const lineHeightPx = fontSizePx;
+        return `<div style="display:block;font-size:0;line-height:0;margin:0;padding:0;">
+            <span style="display:inline-flex;align-items:center;justify-content:center;height:${lineHeightPx}px;padding:0 6px;color:#000;background:transparent;font-weight:600;font-size:${fontSizePx}px;line-height:${lineHeightPx}px;user-select:none;transform: translate(-50%, -50%);white-space: nowrap;">${text}</span>
+        </div>`;
+    }
+
+    function polygonCentroid(coords) {
+        let area = 0;
+        let cx = 0;
+        let cy = 0;
+        for (let i = 0, len = coords.length - 1; i < len; i++) {
+            const [x0, y0] = coords[i];
+            const [x1, y1] = coords[i + 1];
+            const a = x0 * y1 - x1 * y0;
+            area += a;
+            cx += (x0 + x1) * a;
+            cy += (y0 + y1) * a;
+        }
+        area *= 0.5;
+        if (area === 0) return coords[0];
+        return [cx / (6 * area), cy / (6 * area)];
+    }
+
+    function formatNumber(value) {
+        if (!Number.isFinite(value)) return null;
+        return new Intl.NumberFormat('ru-RU').format(value);
+    }
+
+    function renderContent(parcel) {
+        const statusColors = {
+            free: "#309F48",
+            reserved: "#6b7280",
+            sold: "#7c0313",
+            notForSale: "#5b5b5b"
+        };
+        const statusText = statusLabels[parcel.status] ?? "";
+        const statusColor = statusColors[parcel.status] ?? "#111827";
+        const areaSotka = parcel.area ? (parcel.area / 100) : null;
+        const areaText = areaSotka ? `${formatNumber(areaSotka)} сот.` : "—";
+        const pricePerSotkaText = formatNumber(parcel.pricePerSotka);
+        const totalPrice = (parcel.area && parcel.pricePerSotka) ? (parcel.area / 100 * parcel.pricePerSotka) : null;
+        const totalPriceText = formatNumber(totalPrice);
+        const linkBlock = parcel.link
+            ? `<a href="${parcel.link}" target="_blank" style="display:inline-flex;align-items:center;gap:8px;padding:12px 16px;background:#309F48;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;">Подробнее</a>`
+            : "";
+
+        return `
+            <div style="font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;">
+                <div style="font-size:16px;font-weight:700;color:#111827;margin-bottom:10px;">Участок ${parcel.cadastral}</div>
+                <div style="font-size:14px;color:#4b5563;margin-bottom:6px;">Площадь: ${areaText}</div>
+                <div style="font-size:14px;color:#4b5563;margin-bottom:6px;">Цена за сотку: ${pricePerSotkaText ? pricePerSotkaText + " руб." : "—"}</div>
+                <div style="font-size:14px;color:#4b5563;margin-bottom:12px;">Стоимость участка: ${totalPriceText ? totalPriceText + " руб." : "—"}</div>
+                <div style="font-size:14px;color:#4b5563;margin-bottom:12px;">Статус: <span style="color:${statusColor};font-weight:700;">${statusText}</span></div>
+                ${linkBlock}
+            </div>
+        `;
+    }
+
+    async function loadParcelsGeoJSON() {
+        const resp = await fetch(geojsonUrl);
+        if (!resp.ok) throw new Error("GeoJSON not found");
+        const data = await resp.json();
+        return data.features.map((f) => {
+            const desc = f.properties?.description ?? "";
+            const cadastral = cadastralFromDescription(desc);
+            const coords = f.geometry.type === "Polygon"
+                ? f.geometry.coordinates[0]
+                : f.geometry.coordinates[0][0];
+            // GeoJSON lon/lat -> Yandex lat/lon
+            const latlon = coords.map(([lon, lat]) => [lat, lon]);
+            return {
+                cadastral: cadastral || "",
+                shortId: shortCadastral(cadastral || ""),
+                coords: latlon,
+                area: null,
+                pricePerSotka: null,
+                link: null,
+                status: "free"
+            };
+        }).filter(p => p.cadastral);
+    }
+
+    function applyStatusMapToParcels(statusMap, parcels) {
+        parcels.forEach(p => {
+            if (!statusMap.has(p.cadastral)) return;
+            const record = statusMap.get(p.cadastral);
+            p.status = record.status ?? p.status;
+            p.area = record.area ?? p.area;
+            p.pricePerSotka = record.pricePerSotka ?? p.pricePerSotka;
+            p.link = record.link ?? p.link;
+        });
+    }
+
+    function addYandexLabels(map, parcels) {
+        const labels = [];
+        let layout = ymaps.templateLayoutFactory.createClass(makeLabelHtml("{{ properties.iconContent | raw }}", makeLabelFontPx(map.getZoom())));
+
+        function rebuildLayout() {
+            const fontSizePx = makeLabelFontPx(map.getZoom());
+            layout = ymaps.templateLayoutFactory.createClass(makeLabelHtml("{{ properties.iconContent | raw }}", fontSizePx));
+            labels.forEach(l => l.options.set("iconLayout", layout));
+        }
+
+        function updateVisibility() {
+            const visible = map.getZoom() >= showLabelsFromZoom;
+            labels.forEach(l => l.options.set("visible", visible));
+        }
+
+        parcels.forEach(parcel => {
+            const center = polygonCentroid(parcel.coords);
+            const label = new ymaps.Placemark(center, { iconContent: parcel.shortId }, {
+                iconLayout: layout,
+                draggable: false,
+                hasBalloon: false,
+                hasHint: false,
+                visible: false
+            });
+            labels.push(label);
+            map.geoObjects.add(label);
+        });
+
+        map.events.add("boundschange", (e) => {
+            if (e.get('newZoom') !== e.get('oldZoom')) {
+                rebuildLayout();
+                updateVisibility();
+            }
+        });
+        updateVisibility();
+    }
+
+    async function initYandex() {
+        const minZoom = 9;
+        const maxZoom = 18;
+        const map = new ymaps.Map("map", {
+            center: [55.3516, 35.9340],
+            zoom: mapViewCfg.baseZoom,
+            controls: ['zoomControl']
+        }, {
+            suppressMapOpenBlock: true
+        });
+        const zoomControl = map.controls.get('zoomControl');
+        if (zoomControl) zoomControl.options.set('position', { right: 10, top: 120 });
+        map.options.set({ minZoom, maxZoom });
+        // map.behaviors.disable('scrollZoom');
+
+        const [statusResult, parcels] = await Promise.all([
+            loadStatusData(),
+            loadParcelsGeoJSON()
+        ]);
+
+        applyStatusMapToParcels(statusResult.map, parcels);
+
+        if (parcels.length) {
+            const allCoords = parcels.flatMap(p => p.coords);
+            const lats = allCoords.map(c => c[0]);
+            const lons = allCoords.map(c => c[1]);
+            map.setBounds([[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]], { checkZoomRange: true, duration: 0 });
+            const clampedZoom = Math.min(maxZoom, Math.max(minZoom, map.getZoom()));
+            if (clampedZoom !== map.getZoom()) map.setZoom(clampedZoom, { duration: 0 });
+            map.events.once("actionend", () => applyMobileViewAdjustments(map, minZoom, maxZoom));
+        }
+
+        const polygonByCadastral = new Map();
+        parcels.forEach(parcel => {
+            const palette = colors[parcel.status] ?? colors.free;
+            const polygon = new ymaps.Polygon([parcel.coords], { cadastral: parcel.cadastral }, {
+                fillColor: palette.base,
+                strokeColor: "#4c566a",
+                strokeWidth: 2
+            });
+
+            polygon.properties.set("hintContent", `Участок ${parcel.cadastral}: ${statusLabels[parcel.status]}`);
+            polygon.events.add("click", () => {
+                const center = ymaps.util.bounds.getCenter(polygon.geometry.getBounds());
+                map.balloon.open(center, { contentBody: renderContent(parcel) });
+            });
+            polygon.events.add("mouseenter", () => polygon.options.set("fillColor", palette.hover));
+            polygon.events.add("mouseleave", () => polygon.options.set("fillColor", palette.base));
+
+            map.geoObjects.add(polygon);
+            polygonByCadastral.set(parcel.cadastral, polygon);
+        });
+
+        addYandexLabels(map, parcels);
+
+        // Закрываем балун при клике в пустоту
+        map.events.add("click", (e) => {
+            if (e.get("target") === map) map.balloon.close();
+        });
+    }
+
+    if (window.ymaps) {
+        ymaps.ready(() => {
+            initYandex().catch(err => {
+                console.error(err);
+                document.getElementById('map').innerText = "Не удалось загрузить карту (Yandex): " + err;
+            });
+        });
+    } else {
+        document.getElementById('map').innerText = "Yandex Maps API не загрузился (проверь сеть/ключ).";
+    }
+</script>
+</body>
+</html>
