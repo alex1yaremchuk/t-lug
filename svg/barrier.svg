@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Barrier icon">
+  <path d="M5 54H59" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+
+  <rect x="8" y="24" width="10" height="30" rx="2.5" fill="none" stroke="currentColor" stroke-width="3"/>
+  <path d="M13 30V39" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+
+  <path d="M18 31L49 17L52 23L21 37Z" fill="currentColor"/>
+  <path d="M22.48 32.66L27.68 30.30" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+  <path d="M31.16 28.74L36.36 26.38" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+  <path d="M39.84 24.82L45.04 22.46" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+
+  <path d="M49 17L55 14L58 20L52 23Z" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
+</svg>

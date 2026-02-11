@@ -17,9 +17,85 @@
             width: 100%;
             height: 100vh;
         }
-        /* Приглушаем подложку для Yandex */
+        .map-toolbar {
+            position: fixed;
+            top: 14px;
+            left: 14px;
+            z-index: 2200;
+            display: flex;
+            gap: 8px;
+        }
+        .settlement-btn {
+            border: 1px solid rgba(15, 23, 42, 0.25);
+            background: rgba(248, 250, 252, 0.95);
+            color: #0f172a;
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+        }
+        .settlement-btn:hover {
+            background: #ffffff;
+        }
+        .settlement-btn:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+        .settlement-title {
+            position: fixed;
+            top: 18px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 2200;
+            display: none;
+            color: #0f172a;
+            font-size: 20px;
+            font-weight: 700;
+            line-height: 1.2;
+            text-shadow: 0 1px 2px rgba(248, 250, 252, 0.85);
+            max-width: min(60vw, 420px);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            pointer-events: none;
+            user-select: none;
+        }
+        .settlement-title.is-visible {
+            display: block;
+        }
+        .settlement-picker-panel {
+            position: fixed;
+            top: 60px;
+            left: 14px;
+            right: 14px;
+            z-index: 2200;
+            display: none;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 10px;
+            border-radius: 12px;
+            background: rgba(248, 250, 252, 0.95);
+            border: 1px solid rgba(15, 23, 42, 0.15);
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25);
+        }
+        .settlement-picker-panel.is-open {
+            display: flex;
+        }
+        .settlement-chip {
+            border: 1px solid rgba(15, 23, 42, 0.25);
+            background: #ffffff;
+            color: #0f172a;
+            border-radius: 999px;
+            padding: 6px 10px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        /* Подложка Yandex без приглушения */
         #map [class*="ymaps-"][class*="-ground-pane"] {
-            filter: grayscale(1) brightness(0.55) saturate(0.7);
+            filter: none;
         }
         /* нижние лейблы Yandex Maps */
         #map [class*="ymaps-"][class*="-map-copyrights-promo"],
@@ -49,6 +125,7 @@
             padding: 20px 22px;
             box-shadow: 0 30px 80px rgba(0,0,0,0.35);
             position: relative;
+            isolation: isolate;
         }
         .parcel-swiper {
             width: 100%;
@@ -79,24 +156,42 @@
             position: absolute;
             right: 12px;
             top: 12px;
-            border: none;
-            background: #e2e8f0;
-            color: #0f172a;
-            border-radius: 10px;
-            padding: 6px 10px;
+            width: 34px;
+            height: 34px;
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            background: rgba(15, 23, 42, 0.86);
+            color: #ffffff;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
             cursor: pointer;
             font-weight: 700;
+            font-size: 22px;
+            line-height: 1;
+            z-index: 40;
+            box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
         }
         .modal-close:hover {
-            background: #cbd5f5;
+            background: rgba(15, 23, 42, 0.96);
+        }
+        .modal-close:focus-visible {
+            outline: 2px solid #60a5fa;
+            outline-offset: 2px;
         }
     </style>
 </head>
 <body>
+<div class="map-toolbar">
+    <button class="settlement-btn" type="button" id="settlement-picker-btn">Выбор поселка</button>
+</div>
+<div class="settlement-title" id="settlement-title"></div>
+<div class="settlement-picker-panel" id="settlement-picker-panel"></div>
 <div id="map"></div>
 <div class="modal-overlay" id="parcel-modal">
     <div class="modal-card">
-        <button class="modal-close" type="button" id="parcel-modal-close">Закрыть</button>
+        <button class="modal-close" type="button" id="parcel-modal-close" aria-label="Закрыть">&times;</button>
         <div id="parcel-modal-content"></div>
     </div>
 </div>
@@ -106,10 +201,9 @@
 
 <script>
     const geojsonUrl = "lesnaya.geojson";
-    // Таблица статусов (CSV). Заголовок: дата обновления в первом поле.
-    // Формат строк: cadastral,status,area,pricePerSotka
-    // 50:18:0090613:1003,Свободен,650,160000
-    const statusUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTcWNQ2hBAxhuwl-i4aTMPfGri_pIkSarxsvzJRGkyiyAZDc4L9FuVibekE6BcAHAaOtVYyNg2KqikD/pub?gid=491333111&single=true&output=csv";
+    const lotsUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTcWNQ2hBAxhuwl-i4aTMPfGri_pIkSarxsvzJRGkyiyAZDc4L9FuVibekE6BcAHAaOtVYyNg2KqikD/pub?gid=491333111&single=true&output=csv";
+    const infraUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTcWNQ2hBAxhuwl-i4aTMPfGri_pIkSarxsvzJRGkyiyAZDc4L9FuVibekE6BcAHAaOtVYyNg2KqikD/pub?gid=1181011843&single=true&output=csv";
+    const defaultCadastralPrefix = "50:18:0090613:";
 
     const colors = {
         free: { base: "#309F48", hover: "#46bf5f" },
@@ -136,13 +230,33 @@
     };
 
     const showLabelsFromZoom = 16;
-    const labelFontPxByZoom = [
-        { zoom: 14, size: 6 },
-        { zoom: 15, size: 8 },
-        { zoom: 16, size: 10 },
-        { zoom: 17, size: 14 },
-        { zoom: 18, size: 16 }
-    ];
+    const labelFontSizeByZoom = {
+        picker: [
+            { minZoom: 9, fontSizePx: 0 },
+            { minZoom: 12, fontSizePx: 10 },
+            { minZoom: 13, fontSizePx: 12 },
+            { minZoom: 14, fontSizePx: 14 },
+            { minZoom: 15, fontSizePx: 16 },
+            { minZoom: 17, fontSizePx: 20 }
+        ],
+        settlement: [
+            { minZoom: 15, fontSizePx: 9 },
+            { minZoom: 17, fontSizePx: 13 }
+        ]
+    };
+    const contourStyleCfg = {
+        picker: {
+            fillBase: "rgba(37,99,235,0.16)",
+            fillHover: "rgba(37,99,235,0.30)",
+            strokeColor: "#4c566a",
+            strokeWidth: 2
+        },
+        settlement: {
+            strokeColor: "#4c566a",
+            strokeWidth: 3,
+            strokeOpacity: 1
+        }
+    };
 
     function isMobileView() {
         return window.matchMedia && window.matchMedia(`(max-width: ${mapViewCfg.mobile.maxWidthPx}px)`).matches;
@@ -159,6 +273,46 @@
         map.setCenter(adjustedCenter, targetZoom, { duration: 0, checkZoomRange: true });
     }
 
+    function normalizeConfigNumber(value) {
+        if (Number.isFinite(value)) return value;
+        const text = String(value ?? "").trim().replace(",", ".");
+        const parsed = Number(text);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function getLabelSteps(sizeProfile) {
+        const profile = labelFontSizeByZoom[sizeProfile] ? sizeProfile : "settlement";
+        if (labelStepsCache.has(profile)) return labelStepsCache.get(profile);
+
+        const rawSteps = Array.isArray(labelFontSizeByZoom[profile]) ? labelFontSizeByZoom[profile] : [];
+        const normalized = rawSteps
+            .map((step) => ({
+                minZoom: normalizeConfigNumber(step?.minZoom),
+                fontSizePx: normalizeConfigNumber(step?.fontSizePx)
+            }))
+            .filter((step) => Number.isFinite(step.minZoom) && Number.isFinite(step.fontSizePx))
+            .sort((a, b) => a.minZoom - b.minZoom);
+
+        const steps = normalized.length ? normalized : [{ minZoom: Number.NEGATIVE_INFINITY, fontSizePx: 12 }];
+        labelStepsCache.set(profile, steps);
+        return steps;
+    }
+
+    function resolveLabelFontStep(sizeProfile, zoom) {
+        const steps = getLabelSteps(sizeProfile);
+        const safeZoom = Number.isFinite(zoom) ? zoom : mapViewCfg.baseZoom;
+        let matched = steps[0];
+        for (let i = 0; i < steps.length; i++) {
+            if (safeZoom >= steps[i].minZoom) matched = steps[i];
+            else break;
+        }
+        return matched;
+    }
+
+    function resolveLabelFontSizePx(sizeProfile, zoom) {
+        return resolveLabelFontStep(sizeProfile, zoom).fontSizePx;
+    }
+
     function normalizeStatus(text) {
         const value = (text || "").trim().toLowerCase();
         if (!value) return null;
@@ -167,6 +321,125 @@
         if ((value.includes("нет") && value.includes("прод")) || value.includes("не прода")) return "notForSale";
         if (value.includes("прод")) return "sold";
         return null;
+    }
+
+    function normalizeParcelType(text) {
+        const value = (text || "").trim().toLowerCase();
+        if (!value) return null;
+        if (value.includes("контур")) return "contour";
+        if (value.includes("участ")) return "plot";
+        if (value.includes("дом")) return "house";
+        if (value.includes("спорт")) return "sport";
+        if (value.includes("дет")) return "playground";
+        if (value.includes("тех")) return "tech";
+        if (value.includes("кпп")) return "checkpoint";
+        return null;
+    }
+
+    function isHiddenParcelType(type) {
+        return type === "tech";
+    }
+
+    function getParcelTypeTitle(type) {
+        const typeTitle = {
+            plot: "Участок",
+            house: "Дом",
+            sport: "Спорт",
+            playground: "Детская",
+            checkpoint: "КПП",
+            contour: "Контур",
+            tech: "Техн"
+        };
+        return typeTitle[type] ?? "Участок";
+    }
+
+    function trimCell(value) {
+        return String(value ?? "").replace(/\u00A0/g, " ").trim();
+    }
+
+    function normalizeIdentifier(value) {
+        return trimCell(value).toLowerCase().replace(/\s+/g, " ");
+    }
+
+    function escapeHtml(text) {
+        return String(text ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    function textToHtml(text) {
+        return escapeHtml(text).replace(/\r?\n/g, "<br>");
+    }
+
+    function parseNumberRu(text) {
+        const cleaned = trimCell(text).replace(/\s+/g, "").replace(",", ".");
+        if (!cleaned) return null;
+        const number = Number(cleaned);
+        return Number.isFinite(number) ? number : null;
+    }
+
+    function parseCsvRows(text) {
+        const source = String(text ?? "");
+        const rows = [];
+        let row = [];
+        let field = "";
+        let inQuotes = false;
+
+        for (let i = 0; i < source.length; i++) {
+            const ch = source[i];
+            if (ch === '"') {
+                const next = source[i + 1];
+                if (inQuotes && next === '"') {
+                    field += '"';
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+                continue;
+            }
+            if (ch === "," && !inQuotes) {
+                row.push(field);
+                field = "";
+                continue;
+            }
+            if ((ch === "\n" || ch === "\r") && !inQuotes) {
+                if (ch === "\r" && source[i + 1] === "\n") i++;
+                row.push(field);
+                rows.push(row);
+                row = [];
+                field = "";
+                continue;
+            }
+            field += ch;
+        }
+
+        row.push(field);
+        if (row.length > 1 || trimCell(row[0])) rows.push(row);
+        return rows;
+    }
+
+    function getTypeIconPath(type) {
+        const icons = {
+            sport: "svg/soccer-field.svg",
+            playground: "svg/monkeybar.svg",
+            checkpoint: "svg/barrier.svg"
+        };
+        return icons[type] ?? null;
+    }
+
+    function getParcelLabelText(parcel) {
+        if (parcel.type === "house" || isHiddenParcelType(parcel.type)) return null;
+        const iconPath = getTypeIconPath(parcel.type);
+        if (iconPath) {
+            return `<span style="display:inline-flex;align-items:center;justify-content:center;width:1.5em;height:1.5em;">
+                <img src="${iconPath}" alt="" style="display:block;width:100%;height:100%;" />
+            </span>`;
+        }
+        if (parcel.type === "contour") return escapeHtml(parcel.name || parcel.shortId || "");
+        return escapeHtml(parcel.lotNumber || parcel.shortId || "");
     }
 
     function parseSheetDate(text) {
@@ -189,46 +462,97 @@
         return null;
     }
 
-    function parseStatusCsv(text) {
-        const trimmed = (text || "").trim();
-        if (!trimmed) return { map: new Map(), maxUpdatedTs: null };
-        const lines = trimmed.split(/\r?\n/);
-        const headerCells = (lines[0] || "").split(",");
-        const headerUpdatedTs = parseSheetDate(headerCells[0]);
-        const rows = lines.slice(1);
+    function extractCadastralPrefix(headerCell) {
+        const match = trimCell(headerCell).match(/(\d{2}:\d{2}:\d{7}:?)/);
+        let prefix = match ? match[1] : defaultCadastralPrefix;
+        if (!prefix.endsWith(":")) prefix += ":";
+        return prefix;
+    }
+
+    function toFullCadastral(rawValue, prefix) {
+        const value = trimCell(rawValue);
+        if (!value) return null;
+        if (/^\d{2}:\d{2}:\d{7}:\d+$/.test(value)) return value;
+        if (/^\d+$/.test(value)) return `${prefix}${value}`;
+        return cadastralFromDescription(value);
+    }
+
+    function parseLotsCsv(text) {
+        const rows = parseCsvRows(text);
+        if (!rows.length) return { map: new Map(), maxUpdatedTs: null };
+
+        const header = rows[0] || [];
+        const headerUpdatedTs = parseSheetDate(header[0]);
+        const cadastralPrefix = extractCadastralPrefix(header[1]);
         const map = new Map();
         let maxUpdatedTs = headerUpdatedTs ?? null;
-        rows.forEach(row => {
-            if (!row.trim()) return;
-            const cells = row.split(",");
-            const cadRaw = cells[0];
-            const statusRaw = cells[1];
-            const areaRaw = cells[2];
-            const priceRaw = cells[cells.length - 1];
-            const cadastral = (cadRaw || "").trim();
-            if (!cadastral) return;
-            const status = normalizeStatus(statusRaw);
-            const area = Number((areaRaw || "").trim());
-            const pricePerSotka = Number((priceRaw || "").trim());
+
+        rows.slice(1).forEach(cells => {
+            if (!cells || !cells.length) return;
+            const settlementCode = trimCell(cells[0]).toLowerCase();
+            const cadastral = toFullCadastral(cells[1], cadastralPrefix);
+            if (!settlementCode || !cadastral) return;
             map.set(cadastral, {
-                status,
-                area: Number.isFinite(area) ? area : null,
-                pricePerSotka: Number.isFinite(pricePerSotka) ? pricePerSotka : null,
+                settlementCode,
+                lotNumber: trimCell(cells[2]) || shortCadastral(cadastral),
+                status: normalizeStatus(cells[3]) ?? "free",
+                area: parseNumberRu(cells[4]),
+                price: parseNumberRu(cells[5]),
+                houseArea: parseNumberRu(cells[6]),
+                houseDescription: trimCell(cells[7]),
+                type: "plot",
                 link: null
             });
         });
+
         return { map, maxUpdatedTs };
     }
 
-    async function loadStatusData() {
+    function parseInfraCsv(text) {
+        const rows = parseCsvRows(text);
+        const byIdentifier = new Map();
+        const list = [];
+        if (!rows.length) return { byIdentifier, list };
+
+        rows.slice(1).forEach(cells => {
+            if (!cells || !cells.length) return;
+            const settlementCode = trimCell(cells[0]).toLowerCase();
+            const identifier = trimCell(cells[1]);
+            const type = normalizeParcelType(cells[2]);
+            const value = trimCell(cells[3]);
+            if (!settlementCode || !identifier || !type) return;
+            const record = {
+                settlementCode,
+                identifier,
+                identifierKey: normalizeIdentifier(identifier),
+                type,
+                value
+            };
+            byIdentifier.set(record.identifierKey, record);
+            list.push(record);
+        });
+        return { byIdentifier, list };
+    }
+
+    async function loadLotsData() {
         try {
-            const cacheBust = (statusUrl.includes("?") ? "&" : "?") + "cb=" + Date.now();
-            const resp = await fetch(statusUrl + cacheBust, { cache: "no-store" });
-            if (!resp.ok) throw new Error("Status table not found");
-            const text = await resp.text();
-            return parseStatusCsv(text);
+            const cacheBust = (lotsUrl.includes("?") ? "&" : "?") + "cb=" + Date.now();
+            const resp = await fetch(lotsUrl + cacheBust, { cache: "no-store" });
+            if (!resp.ok) throw new Error("Lots table not found");
+            return parseLotsCsv(await resp.text());
         } catch (err) {
             return { map: new Map(), maxUpdatedTs: null };
+        }
+    }
+
+    async function loadInfraData() {
+        try {
+            const cacheBust = (infraUrl.includes("?") ? "&" : "?") + "cb=" + Date.now();
+            const resp = await fetch(infraUrl + cacheBust, { cache: "no-store" });
+            if (!resp.ok) throw new Error("Infra table not found");
+            return parseInfraCsv(await resp.text());
+        } catch (err) {
+            return { byIdentifier: new Map(), list: [] };
         }
     }
 
@@ -241,25 +565,6 @@
         if (!text) return "";
         const parts = text.split(":");
         return parts[parts.length - 1] || text;
-    }
-
-    function makeLabelFontPx(currentZoom) {
-        if (!Number.isFinite(currentZoom)) return 12;
-        const points = labelFontPxByZoom;
-        let low = points[0];
-        let high = points[points.length - 1];
-        for (let i = 0; i < points.length; i++) {
-            const point = points[i];
-            if (currentZoom <= point.zoom) {
-                high = point;
-                break;
-            }
-            low = point;
-        }
-        if (currentZoom <= low.zoom) return low.size;
-        if (currentZoom >= high.zoom) return high.size;
-        const t = (currentZoom - low.zoom) / (high.zoom - low.zoom);
-        return low.size + (high.size - low.size) * t;
     }
 
     function makeLabelHtml(text, fontSize) {
@@ -287,6 +592,79 @@
         return [cx / (6 * area), cy / (6 * area)];
     }
 
+    function computeConvexHull(points) {
+        const unique = [];
+        const seen = new Set();
+        points.forEach((point) => {
+            const lat = point?.[0];
+            const lon = point?.[1];
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+            const key = `${lat}|${lon}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            unique.push([lon, lat]);
+        });
+        if (unique.length < 3) return null;
+        unique.sort((a, b) => (a[0] - b[0]) || (a[1] - b[1]));
+        const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+
+        const lower = [];
+        unique.forEach((point) => {
+            while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
+            lower.push(point);
+        });
+
+        const upper = [];
+        for (let i = unique.length - 1; i >= 0; i--) {
+            const point = unique[i];
+            while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
+            upper.push(point);
+        }
+
+        const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
+        if (hull.length < 3) return null;
+        const latLonHull = hull.map(([lon, lat]) => [lat, lon]);
+        latLonHull.push(latLonHull[0]);
+        return latLonHull;
+    }
+
+    function buildSyntheticContoursFromLots(lots, settlements) {
+        const pointsBySettlement = new Map();
+        lots.forEach((lot) => {
+            if (!lot?.settlementCode || lot.geometryType !== "polygon" || !Array.isArray(lot.coords) || !lot.coords.length) return;
+            if (!pointsBySettlement.has(lot.settlementCode)) pointsBySettlement.set(lot.settlementCode, []);
+            pointsBySettlement.get(lot.settlementCode).push(...lot.coords);
+        });
+
+        const contours = [];
+        pointsBySettlement.forEach((points, settlementCode) => {
+            const hull = computeConvexHull(points);
+            if (!hull) return;
+            const name = settlements.get(settlementCode)?.name || settlementCode.toUpperCase();
+            contours.push({
+                description: `Контур ${name}`,
+                identifierKey: `synthetic-contour-${settlementCode}`,
+                cadastral: "",
+                shortId: settlementCode.toUpperCase(),
+                geometryType: "polygon",
+                point: null,
+                centroid: polygonCentroid(hull),
+                coords: hull,
+                kind: "infra",
+                type: "contour",
+                settlementCode,
+                lotNumber: "",
+                status: "notForSale",
+                area: null,
+                price: null,
+                houseArea: null,
+                houseDescription: "",
+                name
+            });
+        });
+        return contours;
+    }
+
     function formatNumber(value) {
         if (!Number.isFinite(value)) return null;
         return new Intl.NumberFormat('ru-RU').format(value);
@@ -297,6 +675,17 @@
         isOpen: false,
         swiper: null
     };
+    const appState = {
+        map: null,
+        minZoom: 9,
+        maxZoom: 18,
+        uiMode: "settlement",
+        selectedSettlementCode: null,
+        dataset: null,
+        layers: null,
+        labels: [],
+        labelLayoutCache: new Map()
+    };
     const modalImages = [
         "img/1.png",
         "img/2.png",
@@ -304,18 +693,80 @@
         "img/4.png",
         "img/5.png"
     ];
+    const preferredSettlementOrder = ["lg", "x1", "x2"];
+    const labelStepsCache = new Map();
+
+    function getAvailableSettlementCodes() {
+        if (!appState.dataset?.settlements) return [];
+        const preferredIndex = new Map(preferredSettlementOrder.map((code, idx) => [code, idx]));
+        return Array.from(appState.dataset.settlements.keys())
+            .filter(Boolean)
+            .sort((a, b) => {
+                const ai = preferredIndex.has(a) ? preferredIndex.get(a) : Number.MAX_SAFE_INTEGER;
+                const bi = preferredIndex.has(b) ? preferredIndex.get(b) : Number.MAX_SAFE_INTEGER;
+                if (ai !== bi) return ai - bi;
+                return a.localeCompare(b, "ru");
+            });
+    }
+
+    function normalizeSettlementCode(value) {
+        const code = trimCell(value).toLowerCase();
+        if (!code) return null;
+        return appState.dataset?.settlements?.has(code) ? code : null;
+    }
+
+    function readRouteState() {
+        const url = new URL(window.location.href);
+        const rawMode = trimCell(url.searchParams.get("m")).toLowerCase();
+        const rawSettlement = trimCell(url.searchParams.get("s")).toLowerCase();
+        const rawParcel = trimCell(url.searchParams.get("p"));
+        const mode = rawMode === "picker" ? "picker" : "settlement";
+        // Supports compact links like ?m=lg or ?m=x1.
+        const settlementCode = rawMode && rawMode !== "picker" && rawMode !== "settlement"
+            ? rawMode
+            : rawSettlement;
+        return {
+            mode,
+            settlementCode,
+            parcelParam: rawParcel || null
+        };
+    }
+
+    function syncRouteState(pushHistory = false) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("m", appState.uiMode === "picker" ? "picker" : "settlement");
+        if (appState.uiMode === "settlement" && appState.selectedSettlementCode) {
+            url.searchParams.set("s", appState.selectedSettlementCode);
+        } else {
+            url.searchParams.delete("s");
+        }
+        const historyState = {
+            modal: modalState.isOpen,
+            mode: appState.uiMode,
+            settlementCode: appState.selectedSettlementCode || null
+        };
+        if (pushHistory) history.pushState(historyState, "", url.toString());
+        else history.replaceState(historyState, "", url.toString());
+    }
 
     function findParcelByParam(param) {
-        if (!param) return null;
-        return modalState.parcels.find(p => p.cadastral === param || p.shortId === param) || null;
+        const target = trimCell(param);
+        if (!target) return null;
+        const lots = appState.dataset?.lots || modalState.parcels;
+        return lots.find(p => p.cadastral === target || p.shortId === target || String(p.lotNumber || "") === target) || null;
     }
 
     function setUrlParam(paramValue, push) {
         const url = new URL(window.location.href);
         if (paramValue) url.searchParams.set('p', paramValue);
         else url.searchParams.delete('p');
-        if (push) history.pushState({ modal: !!paramValue }, "", url.toString());
-        else history.replaceState({ modal: !!paramValue }, "", url.toString());
+        const historyState = {
+            modal: !!paramValue,
+            mode: appState.uiMode,
+            settlementCode: appState.selectedSettlementCode || null
+        };
+        if (push) history.pushState(historyState, "", url.toString());
+        else history.replaceState(historyState, "", url.toString());
     }
 
     function openParcelModal(parcel, pushHistory = true) {
@@ -351,20 +802,29 @@
             sold: "#7c0313",
             notForSale: "#5b5b5b"
         };
-        const statusText = statusLabels[parcel.status] ?? "";
+        const statusText = statusLabels[parcel.status] ?? "—";
         const statusColor = statusColors[parcel.status] ?? "#111827";
-        const areaSotka = parcel.area ? (parcel.area / 100) : null;
-        const areaText = areaSotka ? `${formatNumber(areaSotka)} сот.` : "—";
-        const pricePerSotkaText = formatNumber(parcel.pricePerSotka);
-        const totalPrice = (parcel.area && parcel.pricePerSotka) ? (parcel.area / 100 * parcel.pricePerSotka) : null;
-        const totalPriceText = formatNumber(totalPrice);
-        const linkBlock = parcel.link
-            ? `<a href="${parcel.link}" target="_blank" style="display:inline-flex;align-items:center;gap:8px;padding:12px 16px;background:#309F48;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;">Подробнее</a>`
-            : "";
+        const areaText = Number.isFinite(parcel.area) ? `${formatNumber(parcel.area)} м²` : "—";
+        const priceText = Number.isFinite(parcel.price) ? `${formatNumber(parcel.price)} руб.` : "—";
+        const houseAreaText = Number.isFinite(parcel.houseArea) ? `${formatNumber(parcel.houseArea)} м²` : "—";
+        const hasHouseInfo = Number.isFinite(parcel.houseArea) || !!trimCell(parcel.houseDescription);
+        const houseDescriptionHtml = trimCell(parcel.houseDescription)
+            ? textToHtml(parcel.houseDescription)
+            : "—";
+        const settlementCode = trimCell(parcel.settlementCode || "");
+        const settlementText = settlementCode ? getSettlementName(settlementCode) : "—";
 
         const slides = modalImages.map(src => `
             <div class="swiper-slide"><img src="${src}" alt=""></div>
         `).join("");
+
+        const houseBlock = hasHouseInfo ? `
+            <div style="margin-top:14px;padding-top:12px;border-top:1px solid #d7dee8;">
+                <div style="font-size:14px;font-weight:700;color:#111827;margin-bottom:6px;">Дом на участке</div>
+                <div style="font-size:14px;color:#4b5563;margin-bottom:6px;">Площадь дома: ${houseAreaText}</div>
+                <div style="font-size:14px;color:#4b5563;">Описание: ${houseDescriptionHtml}</div>
+            </div>
+        ` : "";
 
         return `
             <div style="font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;">
@@ -376,12 +836,13 @@
                     <div class="swiper-button-prev"></div>
                     <div class="swiper-button-next"></div>
                 </div>
-                <div style="font-size:16px;font-weight:700;color:#111827;margin-bottom:10px;">Участок ${parcel.cadastral}</div>
+                <div style="font-size:16px;font-weight:700;color:#111827;margin-bottom:10px;">Участок №${escapeHtml(parcel.lotNumber || parcel.shortId || "—")}</div>
+                <div style="font-size:14px;color:#4b5563;margin-bottom:6px;">Кадастровый номер: ${escapeHtml(parcel.cadastral || "—")}</div>
+                <div style="font-size:14px;color:#4b5563;margin-bottom:6px;">Поселок: ${escapeHtml(settlementText)}</div>
                 <div style="font-size:14px;color:#4b5563;margin-bottom:6px;">Площадь: ${areaText}</div>
-                <div style="font-size:14px;color:#4b5563;margin-bottom:6px;">Цена за сотку: ${pricePerSotkaText ? pricePerSotkaText + " руб." : "—"}</div>
-                <div style="font-size:14px;color:#4b5563;margin-bottom:12px;">Стоимость участка: ${totalPriceText ? totalPriceText + " руб." : "—"}</div>
-                <div style="font-size:14px;color:#4b5563;margin-bottom:12px;">Статус: <span style="color:${statusColor};font-weight:700;">${statusText}</span></div>
-                ${linkBlock}
+                <div style="font-size:14px;color:#4b5563;margin-bottom:12px;">Цена: ${priceText}</div>
+                <div style="font-size:14px;color:#4b5563;">Статус: <span style="color:${statusColor};font-weight:700;">${statusText}</span></div>
+                ${houseBlock}
             </div>
         `;
     }
@@ -411,137 +872,436 @@
         });
     }
 
-    async function loadParcelsGeoJSON() {
+    async function loadMapObjectsGeoJSON() {
         const resp = await fetch(geojsonUrl);
         if (!resp.ok) throw new Error("GeoJSON not found");
         const data = await resp.json();
-        return data.features.map((f) => {
-            const desc = f.properties?.description ?? "";
-            const cadastral = cadastralFromDescription(desc);
-            const coords = f.geometry.type === "Polygon"
-                ? f.geometry.coordinates[0]
-                : f.geometry.coordinates[0][0];
-            // GeoJSON lon/lat -> Yandex lat/lon
-            const latlon = coords.map(([lon, lat]) => [lat, lon]);
+        return (data.features || []).map((f) => {
+            const description = trimCell(f.properties?.description || "");
+            if (!description) return null;
+            const cadastral = cadastralFromDescription(description);
+            const geometry = f.geometry || {};
+            if (geometry.type === "Point") {
+                const [lon, lat] = geometry.coordinates || [];
+                if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+                return {
+                    description,
+                    identifierKey: normalizeIdentifier(description),
+                    cadastral: cadastral || "",
+                    shortId: shortCadastral(cadastral || ""),
+                    geometryType: "point",
+                    point: [lat, lon],
+                    centroid: [lat, lon],
+                    coords: null
+                };
+            }
+            const rawCoords = geometry.type === "Polygon"
+                ? geometry.coordinates?.[0]
+                : geometry.coordinates?.[0]?.[0];
+            if (!Array.isArray(rawCoords) || !rawCoords.length) return null;
+            const coords = rawCoords.map(([lon, lat]) => [lat, lon]);
             return {
+                description,
+                identifierKey: normalizeIdentifier(description),
                 cadastral: cadastral || "",
                 shortId: shortCadastral(cadastral || ""),
-                coords: latlon,
-                area: null,
-                pricePerSotka: null,
-                link: null,
-                status: "free"
+                geometryType: "polygon",
+                point: null,
+                centroid: polygonCentroid(coords),
+                coords
             };
-        }).filter(p => p.cadastral);
+        }).filter(Boolean);
     }
 
-    function applyStatusMapToParcels(statusMap, parcels) {
-        parcels.forEach(p => {
-            if (!statusMap.has(p.cadastral)) return;
-            const record = statusMap.get(p.cadastral);
-            p.status = record.status ?? p.status;
-            p.area = record.area ?? p.area;
-            p.pricePerSotka = record.pricePerSotka ?? p.pricePerSotka;
-            p.link = record.link ?? p.link;
-        });
-    }
+    function buildDataset(geoObjects, lotsData, infraData) {
+        const settlements = new Map();
+        const ensureSettlement = (code, name) => {
+            if (!code) return null;
+            if (!settlements.has(code)) settlements.set(code, { code, name: name || code.toUpperCase() });
+            else if (name && !settlements.get(code).name) settlements.get(code).name = name;
+            return settlements.get(code);
+        };
 
-    function addYandexLabels(map, parcels) {
-        const labels = [];
-        let layout = ymaps.templateLayoutFactory.createClass(makeLabelHtml("{{ properties.iconContent | raw }}", makeLabelFontPx(map.getZoom())));
+        infraData.list
+            .filter(r => r.type === "contour")
+            .forEach(r => ensureSettlement(r.settlementCode, r.value || r.settlementCode.toUpperCase()));
 
-        function rebuildLayout() {
-            const fontSizePx = makeLabelFontPx(map.getZoom());
-            layout = ymaps.templateLayoutFactory.createClass(makeLabelHtml("{{ properties.iconContent | raw }}", fontSizePx));
-            labels.forEach(l => l.options.set("iconLayout", layout));
-        }
+        const items = [];
+        const lots = [];
+        const contours = [];
 
-        function updateVisibility() {
-            const visible = map.getZoom() >= showLabelsFromZoom;
-            labels.forEach(l => l.options.set("visible", visible));
-        }
-
-        parcels.forEach(parcel => {
-            const center = polygonCentroid(parcel.coords);
-            const label = new ymaps.Placemark(center, { iconContent: parcel.shortId }, {
-                iconLayout: layout,
-                draggable: false,
-                hasBalloon: false,
-                hasHint: false,
-                visible: false
-            });
-            labels.push(label);
-            map.geoObjects.add(label);
-        });
-
-        map.events.add("boundschange", (e) => {
-            if (e.get('newZoom') !== e.get('oldZoom')) {
-                rebuildLayout();
-                updateVisibility();
+        geoObjects.forEach((obj) => {
+            const lot = obj.cadastral ? lotsData.map.get(obj.cadastral) : null;
+            if (lot) {
+                const item = {
+                    ...obj,
+                    kind: "lot",
+                    type: "plot",
+                    settlementCode: lot.settlementCode,
+                    lotNumber: lot.lotNumber,
+                    status: lot.status,
+                    area: lot.area,
+                    price: lot.price,
+                    houseArea: lot.houseArea,
+                    houseDescription: lot.houseDescription
+                };
+                ensureSettlement(item.settlementCode);
+                items.push(item);
+                lots.push(item);
+                return;
             }
+
+            const infra = infraData.byIdentifier.get(obj.identifierKey);
+            if (!infra) return;
+            const item = {
+                ...obj,
+                kind: "infra",
+                type: infra.type,
+                settlementCode: infra.settlementCode,
+                lotNumber: "",
+                status: "notForSale",
+                area: null,
+                price: null,
+                houseArea: null,
+                houseDescription: "",
+                name: infra.value || obj.description
+            };
+            ensureSettlement(item.settlementCode, infra.value || undefined);
+            items.push(item);
+            if (item.type === "contour") contours.push(item);
         });
-        updateVisibility();
+
+        const pickerContours = [...contours];
+        const syntheticContours = buildSyntheticContoursFromLots(lots, settlements);
+        const contourSettlements = new Set(pickerContours.map((item) => item.settlementCode));
+        syntheticContours.forEach((item) => {
+            if (contourSettlements.has(item.settlementCode)) return;
+            pickerContours.push(item);
+        });
+        return { items, lots, contours: pickerContours, settlements };
+    }
+
+    function getSettlementName(code) {
+        if (!code) return "";
+        return appState.dataset?.settlements?.get(code)?.name || code.toUpperCase();
+    }
+
+    function getFeaturePalette(item, mode = "settlement") {
+        if (item.type === "contour") {
+            if (mode === "picker") {
+                return {
+                    base: contourStyleCfg.picker.fillBase,
+                    hover: contourStyleCfg.picker.fillHover,
+                    strokeColor: contourStyleCfg.picker.strokeColor,
+                    strokeWidth: contourStyleCfg.picker.strokeWidth
+                };
+            }
+            return {
+                base: "rgba(0,0,0,0)",
+                hover: "rgba(0,0,0,0)",
+                strokeColor: contourStyleCfg.settlement.strokeColor,
+                strokeWidth: contourStyleCfg.settlement.strokeWidth
+            };
+        }
+        if (item.type === "house") {
+            const palette = colors[item.status] ?? colors.free;
+            return { base: "rgba(0,0,0,0)", hover: palette.hover, strokeColor: "#4c566a", strokeWidth: 2 };
+        }
+        if (item.kind === "lot") {
+            const palette = colors[item.status] ?? colors.free;
+            return { base: palette.base, hover: palette.hover, strokeColor: "#4c566a", strokeWidth: 2 };
+        }
+        return { base: "rgba(30,64,175,0.14)", hover: "rgba(30,64,175,0.24)", strokeColor: "#334155", strokeWidth: 2 };
+    }
+
+    function makeHintContent(item) {
+        if (item.kind === "lot") return `Участок №${item.lotNumber || item.shortId}: ${statusLabels[item.status] ?? "—"}`;
+        if (item.type === "contour") return getSettlementName(item.settlementCode);
+        const title = getParcelTypeTitle(item.type);
+        const name = trimCell(item.name || item.description);
+        return name ? `${title}: ${name}` : title;
+    }
+
+    function getLabelLayout(fontSizePx) {
+        const key = String(fontSizePx);
+        if (!appState.labelLayoutCache.has(key)) {
+            appState.labelLayoutCache.set(key, ymaps.templateLayoutFactory.createClass(makeLabelHtml("{{ properties.iconContent | raw }}", fontSizePx)));
+        }
+        return appState.labelLayoutCache.get(key);
+    }
+
+    function resetMapLayers() {
+        if (!appState.layers) return;
+        appState.layers.features.removeAll();
+        appState.layers.labels.removeAll();
+        appState.labels = [];
+        modalState.parcels = [];
+    }
+
+    function resolveLabelVisibility(visibilityRule, alwaysVisible, zoom, fontSizePx) {
+        if (fontSizePx <= 0) return false;
+        if (visibilityRule === "pickerSettlement") return true;
+        return alwaysVisible || zoom >= showLabelsFromZoom;
+    }
+
+    function createMapLabel(position, content, alwaysVisible, sizeProfile, visibilityRule = "default") {
+        const currentZoom = appState.map?.getZoom?.();
+        const safeZoom = Number.isFinite(currentZoom) ? currentZoom : mapViewCfg.baseZoom;
+        const fontSizePx = resolveLabelFontSizePx(sizeProfile, safeZoom);
+        const isVisible = resolveLabelVisibility(visibilityRule, !!alwaysVisible, safeZoom, fontSizePx);
+        const label = new ymaps.Placemark(position, { iconContent: content }, {
+            iconLayout: getLabelLayout(fontSizePx),
+            draggable: false,
+            hasBalloon: false,
+            hasHint: false,
+            visible: isVisible
+        });
+        appState.layers.labels.add(label);
+        appState.labels.push({
+            object: label,
+            alwaysVisible: !!alwaysVisible,
+            sizeProfile,
+            fontSizePx,
+            visibilityRule
+        });
+    }
+
+    function updateLabelVisibility() {
+        const zoom = appState.map?.getZoom?.();
+        if (!Number.isFinite(zoom)) return;
+        appState.labels.forEach((entry) => {
+            const nextFontSizePx = resolveLabelFontSizePx(entry.sizeProfile, zoom);
+            if (nextFontSizePx !== entry.fontSizePx) {
+                entry.fontSizePx = nextFontSizePx;
+                entry.object.options.set("iconLayout", getLabelLayout(nextFontSizePx));
+            }
+            const isVisible = resolveLabelVisibility(entry.visibilityRule, entry.alwaysVisible, zoom, nextFontSizePx);
+            entry.object.options.set("visible", isVisible);
+        });
+    }
+
+    function addFeatureToMap(item, mode, options = {}) {
+        const hideLabel = !!options.hideLabel;
+        const baseLabelContent = mode === "picker" && item.type === "contour"
+            ? escapeHtml(getSettlementName(item.settlementCode))
+            : getParcelLabelText(item);
+        const labelContent = hideLabel ? null : baseLabelContent;
+        const labelVisibilityRule = mode === "picker" && item.type === "contour"
+            ? "pickerSettlement"
+            : "default";
+
+        if (item.geometryType === "point" && item.point) {
+            if (labelContent) createMapLabel(item.point, labelContent, mode === "picker", mode === "picker" ? "picker" : "settlement", labelVisibilityRule);
+            if (mode === "settlement" && item.kind === "lot" && item.type !== "house") modalState.parcels.push(item);
+            return;
+        }
+        if (!item.coords?.length) return;
+
+        if (mode === "settlement" && item.type === "contour") {
+            const perimeter = new ymaps.Polyline(item.coords, {}, {
+                strokeColor: contourStyleCfg.settlement.strokeColor,
+                strokeWidth: contourStyleCfg.settlement.strokeWidth,
+                strokeOpacity: contourStyleCfg.settlement.strokeOpacity,
+                interactivityModel: "default#transparent",
+                hasHint: false,
+                hasBalloon: false,
+                cursor: "default"
+            });
+            appState.layers.features.add(perimeter);
+            return;
+        }
+
+        const palette = getFeaturePalette(item, mode);
+        const polygon = new ymaps.Polygon([item.coords], { objectId: item.identifierKey }, {
+            fillColor: palette.base,
+            strokeColor: palette.strokeColor,
+            strokeWidth: palette.strokeWidth
+        });
+        polygon.properties.set("hintContent", makeHintContent(item));
+        if (mode === "picker" && item.type === "contour") {
+            polygon.events.add("click", () => {
+                appState.selectedSettlementCode = item.settlementCode;
+                appState.uiMode = "settlement";
+                closeParcelModal(true);
+                renderCurrentMode(true);
+            });
+        } else if (mode === "settlement" && item.kind === "lot" && item.type !== "house") {
+            polygon.events.add("click", () => openParcelModal(item, true));
+            modalState.parcels.push(item);
+        }
+        polygon.events.add("mouseenter", () => polygon.options.set("fillColor", palette.hover));
+        polygon.events.add("mouseleave", () => polygon.options.set("fillColor", palette.base));
+        appState.layers.features.add(polygon);
+
+        if (labelContent && item.centroid) {
+            createMapLabel(item.centroid, labelContent, mode === "picker", mode === "picker" ? "picker" : "settlement", labelVisibilityRule);
+        }
+    }
+
+    function collectBoundsPoints(items) {
+        const points = [];
+        items.forEach((item) => {
+            if (item.geometryType === "polygon" && Array.isArray(item.coords)) points.push(...item.coords);
+            else if (item.geometryType === "point" && Array.isArray(item.point)) points.push(item.point);
+        });
+        return points;
+    }
+
+    function fitMapToItems(items) {
+        if (!appState.map || !items.length) return;
+        const points = collectBoundsPoints(items);
+        if (!points.length) return;
+        const lats = points.map(p => p[0]);
+        const lons = points.map(p => p[1]);
+        appState.map.setBounds([[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]], { checkZoomRange: true, duration: 0 });
+        const clampedZoom = Math.min(appState.maxZoom, Math.max(appState.minZoom, appState.map.getZoom()));
+        if (clampedZoom !== appState.map.getZoom()) appState.map.setZoom(clampedZoom, { duration: 0 });
+        applyMobileViewAdjustments(appState.map, appState.minZoom, appState.maxZoom);
+    }
+
+    function pickDefaultSettlementCode() {
+        if (!appState.dataset) return null;
+        if (appState.dataset.settlements.has("lg")) return "lg";
+        if (appState.dataset.contours.length) return appState.dataset.contours[0].settlementCode;
+        if (appState.dataset.lots.length) return appState.dataset.lots[0].settlementCode;
+        return appState.dataset.settlements.keys().next().value || null;
+    }
+
+    function renderSettlementPickerPanel() {
+        const panel = document.getElementById("settlement-picker-panel");
+        if (!panel) return;
+        if (appState.uiMode !== "picker" || !appState.dataset) {
+            panel.classList.remove("is-open");
+            panel.innerHTML = "";
+            return;
+        }
+        const settlementCodes = getAvailableSettlementCodes();
+        if (!settlementCodes.length) {
+            panel.classList.remove("is-open");
+            panel.innerHTML = "";
+            return;
+        }
+        panel.classList.add("is-open");
+        panel.innerHTML = settlementCodes.map((code) => {
+            const name = escapeHtml(getSettlementName(code) || code.toUpperCase());
+            return `<button class="settlement-chip" type="button" data-settlement-code="${escapeHtml(code)}">${name}</button>`;
+        }).join("");
+        panel.querySelectorAll("[data-settlement-code]").forEach((button) => {
+            button.addEventListener("click", () => {
+                const code = normalizeSettlementCode(button.getAttribute("data-settlement-code"));
+                if (!code) return;
+                appState.selectedSettlementCode = code;
+                appState.uiMode = "settlement";
+                closeParcelModal(true);
+                renderCurrentMode(true);
+            });
+        });
+    }
+
+    function updateSettlementButton() {
+        const btn = document.getElementById("settlement-picker-btn");
+        if (!btn) return;
+        const settlementCount = getAvailableSettlementCodes().length;
+        btn.disabled = !appState.dataset || settlementCount <= 1;
+        btn.textContent = appState.uiMode === "picker" ? "К участкам" : "Выбор поселка";
+    }
+
+    function updateSettlementTitle() {
+        const titleEl = document.getElementById("settlement-title");
+        if (!titleEl) return;
+        const showTitle = !!appState.dataset && appState.uiMode === "settlement" && !!appState.selectedSettlementCode;
+        if (!showTitle) {
+            titleEl.textContent = "";
+            titleEl.classList.remove("is-visible");
+            return;
+        }
+        titleEl.textContent = getSettlementName(appState.selectedSettlementCode) || appState.selectedSettlementCode.toUpperCase();
+        titleEl.classList.add("is-visible");
+    }
+
+    function renderSettlementMode() {
+        const settlementCode = appState.selectedSettlementCode || pickDefaultSettlementCode();
+        if (!settlementCode) return;
+        appState.selectedSettlementCode = settlementCode;
+        appState.uiMode = "settlement";
+        resetMapLayers();
+
+        const visibleItems = appState.dataset.items.filter(item => {
+            if (item.settlementCode !== settlementCode) return false;
+            if (item.type === "contour") return false;
+            if (isHiddenParcelType(item.type)) return false;
+            return true;
+        });
+        visibleItems.forEach(item => addFeatureToMap(item, "settlement"));
+
+        const settlementContours = appState.dataset.contours.filter(c => c.settlementCode === settlementCode);
+        settlementContours.forEach(item => addFeatureToMap(item, "settlement", { hideLabel: true }));
+
+        fitMapToItems(settlementContours.length ? settlementContours : visibleItems);
+        updateLabelVisibility();
+        updateSettlementButton();
+        updateSettlementTitle();
+        renderSettlementPickerPanel();
+    }
+
+    function renderSettlementPickerMode() {
+        const contours = appState.dataset.contours.filter(c => !isHiddenParcelType(c.type));
+        appState.uiMode = "picker";
+        resetMapLayers();
+        closeParcelModal(true);
+        contours.forEach(item => addFeatureToMap(item, "picker"));
+        fitMapToItems(contours);
+        updateLabelVisibility();
+        updateSettlementButton();
+        updateSettlementTitle();
+        renderSettlementPickerPanel();
+    }
+
+    function renderCurrentMode(pushHistory = false) {
+        if (!appState.map || !appState.dataset) return;
+        if (appState.uiMode === "picker") renderSettlementPickerMode();
+        else renderSettlementMode();
+        syncRouteState(pushHistory);
     }
 
     async function initYandex() {
-        const minZoom = 9;
-        const maxZoom = 18;
         const map = new ymaps.Map("map", {
             center: [55.3516, 35.9340],
             zoom: mapViewCfg.baseZoom,
-            controls: ['zoomControl']
+            controls: ["zoomControl"]
         }, {
             suppressMapOpenBlock: true
         });
-        const zoomControl = map.controls.get('zoomControl');
-        if (zoomControl) zoomControl.options.set('position', { right: 10, top: 120 });
-        map.options.set({ minZoom, maxZoom });
-        // map.behaviors.disable('scrollZoom');
+        appState.map = map;
+        appState.layers = {
+            features: new ymaps.GeoObjectCollection(),
+            labels: new ymaps.GeoObjectCollection()
+        };
+        map.geoObjects.add(appState.layers.features);
+        map.geoObjects.add(appState.layers.labels);
 
-        const [statusResult, parcels] = await Promise.all([
-            loadStatusData(),
-            loadParcelsGeoJSON()
-        ]);
-
-        applyStatusMapToParcels(statusResult.map, parcels);
-        modalState.parcels = parcels;
-
-        if (parcels.length) {
-            const allCoords = parcels.flatMap(p => p.coords);
-            const lats = allCoords.map(c => c[0]);
-            const lons = allCoords.map(c => c[1]);
-            map.setBounds([[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]], { checkZoomRange: true, duration: 0 });
-            const clampedZoom = Math.min(maxZoom, Math.max(minZoom, map.getZoom()));
-            if (clampedZoom !== map.getZoom()) map.setZoom(clampedZoom, { duration: 0 });
-            map.events.once("actionend", () => applyMobileViewAdjustments(map, minZoom, maxZoom));
-        }
-
-        const polygonByCadastral = new Map();
-        parcels.forEach(parcel => {
-            const palette = colors[parcel.status] ?? colors.free;
-            const polygon = new ymaps.Polygon([parcel.coords], { cadastral: parcel.cadastral }, {
-                fillColor: palette.base,
-                strokeColor: "#4c566a",
-                strokeWidth: 2
-            });
-
-            polygon.properties.set("hintContent", `Участок ${parcel.cadastral}: ${statusLabels[parcel.status]}`);
-            polygon.events.add("click", () => openParcelModal(parcel, true));
-            polygon.events.add("mouseenter", () => polygon.options.set("fillColor", palette.hover));
-            polygon.events.add("mouseleave", () => polygon.options.set("fillColor", palette.base));
-
-            map.geoObjects.add(polygon);
-            polygonByCadastral.set(parcel.cadastral, polygon);
+        const zoomControl = map.controls.get("zoomControl");
+        if (zoomControl) zoomControl.options.set("position", { right: 10, top: 120 });
+        map.options.set({ minZoom: appState.minZoom, maxZoom: appState.maxZoom });
+        map.events.add("boundschange", (e) => {
+            if (e.get("newZoom") !== e.get("oldZoom")) updateLabelVisibility();
         });
 
-        addYandexLabels(map, parcels);
+        const [lotsData, infraData, geoObjects] = await Promise.all([
+            loadLotsData(),
+            loadInfraData(),
+            loadMapObjectsGeoJSON()
+        ]);
+        appState.dataset = buildDataset(geoObjects, lotsData, infraData);
 
-        // Инициализация модалки из URL
-        const initialParam = new URL(window.location.href).searchParams.get('p');
-        if (initialParam) {
-            const parcel = findParcelByParam(initialParam);
-            if (parcel) openParcelModal(parcel, false);
-        }
+        const routeState = readRouteState();
+        const initialParcel = routeState.parcelParam ? findParcelByParam(routeState.parcelParam) : null;
+        const routeSettlementCode = normalizeSettlementCode(routeState.settlementCode);
+        appState.selectedSettlementCode = normalizeSettlementCode(initialParcel?.settlementCode) || routeSettlementCode || pickDefaultSettlementCode();
+        appState.uiMode = initialParcel ? "settlement" : routeState.mode;
+        renderCurrentMode(false);
+        if (initialParcel) openParcelModal(initialParcel, false);
+        else if (routeState.parcelParam) setUrlParam(null, false);
     }
 
     if (window.ymaps) {
@@ -555,19 +1315,44 @@
         document.getElementById('map').innerText = "Yandex Maps API не загрузился (проверь сеть/ключ).";
     }
 
-    // Modal close handlers + routing
+    // Toolbar + modal handlers + routing
+    document.getElementById("settlement-picker-btn")?.addEventListener("click", () => {
+        if (!appState.dataset) return;
+        appState.uiMode = appState.uiMode === "picker" ? "settlement" : "picker";
+        renderCurrentMode(true);
+    });
     document.getElementById('parcel-modal-close')?.addEventListener('click', () => closeParcelModal(false));
     document.getElementById('parcel-modal')?.addEventListener('click', (e) => {
         if (e.target && e.target.id === 'parcel-modal') closeParcelModal(false);
     });
-    window.addEventListener('popstate', () => {
-        const param = new URL(window.location.href).searchParams.get('p');
-        if (param) {
-            const parcel = findParcelByParam(param);
-            if (parcel) openParcelModal(parcel, false);
-        } else {
-            closeParcelModal(true);
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modalState.isOpen) {
+            e.preventDefault();
+            closeParcelModal(false);
         }
+    });
+    window.addEventListener('popstate', () => {
+        if (!appState.dataset) return;
+        const routeState = readRouteState();
+        const parcel = routeState.parcelParam ? findParcelByParam(routeState.parcelParam) : null;
+        const routeSettlementCode = normalizeSettlementCode(routeState.settlementCode) || pickDefaultSettlementCode();
+        const targetSettlementCode = normalizeSettlementCode(parcel?.settlementCode) || routeSettlementCode;
+        const targetMode = parcel ? "settlement" : routeState.mode;
+        const modeChanged = appState.uiMode !== targetMode;
+        const settlementChanged = appState.selectedSettlementCode !== targetSettlementCode;
+
+        // Closing/opening parcel modal should not reset map viewport unless route actually changes mode/settlement.
+        if (!parcel && modalState.isOpen && !modeChanged && !settlementChanged) {
+            closeParcelModal(true);
+            return;
+        }
+
+        appState.selectedSettlementCode = targetSettlementCode;
+        appState.uiMode = targetMode;
+        if (modeChanged || settlementChanged) renderCurrentMode(false);
+
+        if (parcel) openParcelModal(parcel, false);
+        else closeParcelModal(true);
     });
 </script>
 </body>
