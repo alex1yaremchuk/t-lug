@@ -477,6 +477,35 @@
         return cadastralFromDescription(value);
     }
 
+    function splitImageRefs(rawText) {
+        return String(rawText ?? "")
+            .split(/[\n;,]+/)
+            .map(part => trimCell(part))
+            .filter(Boolean);
+    }
+
+    function resolveParcelImagePath(ref, settlementCode, cadastral) {
+        const value = trimCell(ref);
+        if (!value) return null;
+        const normalized = value.replace(/\\/g, "/");
+        if (/^(https?:)?\/\//i.test(normalized) || /^data:/i.test(normalized) || /^blob:/i.test(normalized)) return normalized;
+        if (normalized.startsWith("@/")) {
+            const filePart = normalized.slice(2).replace(/^\/+/, "");
+            const settlement = trimCell(settlementCode).toLowerCase();
+            const cadastralSuffix = shortCadastral(cadastral);
+            if (!filePart || !settlement || !cadastralSuffix) return null;
+            return `img/${settlement}/${cadastralSuffix}/${filePart}`;
+        }
+        if (normalized.startsWith("img/") || normalized.startsWith("/") || normalized.startsWith("./") || normalized.startsWith("../")) return normalized;
+        return `img/${normalized}`;
+    }
+
+    function parseParcelImages(rawText, settlementCode, cadastral) {
+        return splitImageRefs(rawText)
+            .map(ref => resolveParcelImagePath(ref, settlementCode, cadastral))
+            .filter(Boolean);
+    }
+
     function parseLotsCsv(text) {
         const rows = parseCsvRows(text);
         if (!rows.length) return { map: new Map(), maxUpdatedTs: null };
@@ -492,6 +521,7 @@
             const settlementCode = trimCell(cells[0]).toLowerCase();
             const cadastral = toFullCadastral(cells[1], cadastralPrefix);
             if (!settlementCode || !cadastral) return;
+            const imagesRaw = cells.length > 8 ? cells.slice(8).join(",") : "";
             map.set(cadastral, {
                 settlementCode,
                 lotNumber: trimCell(cells[2]) || shortCadastral(cadastral),
@@ -500,6 +530,7 @@
                 price: parseNumberRu(cells[5]),
                 houseArea: parseNumberRu(cells[6]),
                 houseDescription: trimCell(cells[7]),
+                images: parseParcelImages(imagesRaw, settlementCode, cadastral),
                 type: "plot",
                 link: null
             });
@@ -686,7 +717,7 @@
         labels: [],
         labelLayoutCache: new Map()
     };
-    const modalImages = [
+    const defaultParcelImages = [
         "img/1.png",
         "img/2.png",
         "img/3.png",
@@ -814,8 +845,9 @@
         const settlementCode = trimCell(parcel.settlementCode || "");
         const settlementText = settlementCode ? getSettlementName(settlementCode) : "—";
 
-        const slides = modalImages.map(src => `
-            <div class="swiper-slide"><img src="${src}" alt=""></div>
+        const slideImages = Array.isArray(parcel.images) && parcel.images.length ? parcel.images : defaultParcelImages;
+        const slides = slideImages.map(src => `
+            <div class="swiper-slide"><img src="${escapeHtml(src)}" alt=""></div>
         `).join("");
 
         const houseBlock = hasHouseInfo ? `
@@ -943,7 +975,8 @@
                     area: lot.area,
                     price: lot.price,
                     houseArea: lot.houseArea,
-                    houseDescription: lot.houseDescription
+                    houseDescription: lot.houseDescription,
+                    images: Array.isArray(lot.images) ? lot.images : []
                 };
                 ensureSettlement(item.settlementCode);
                 items.push(item);
@@ -964,6 +997,7 @@
                 price: null,
                 houseArea: null,
                 houseDescription: "",
+                images: [],
                 name: infra.value || obj.description
             };
             ensureSettlement(item.settlementCode, infra.value || undefined);
